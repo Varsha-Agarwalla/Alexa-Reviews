@@ -1,0 +1,263 @@
+---
+title: "Amazon Alexa Reviews"
+author: "Varsha Agarwalla"
+date: "January 30, 2019"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Alexa! Can you please help me here? {.tabset .tabset-fade}
+
+### Introduction 
+
+Few months back, I bought Alexa dot because it was cheap and compact in size. My sister saw it and asked me to get her one too. However, she didn't want the exact same thing. So I looked at Amazon and was going through the reviews. There were so many varities. Each had more than 1000 reviews and had mixed reactions which made it difficult for me to decide on one good product. While googling, I came across this dataset in Kaggle. 
+
+Dataset overview- 
+It consists of a nearly 3000 Amazon customer reviews (input text), star ratings, date of review, variant and feedback of various amazon Alexa products like Alexa Echo, Echo dots, Alexa Firesticks etc.
+
+I thought, being a Data Scientist, I would learn how to train machine for sentiment analysis.
+
+
+### Packages Required
+
+```{r libraries, echo = TRUE, message = FALSE, warning = FALSE}
+library(tidyverse)  #to visualize, transform, input, tidy and join data
+library(readr)      #to input data from tsv
+library(dplyr)      #data wrangling
+library(kableExtra) #to create HTML Table
+library(DT)         #to preview the data sets
+library(lubridate)  #to apply the date functions
+library(tm)         #to text mine
+library(wordcloud)  #to build word cloud
+library(tidytext)   #to text mine
+```
+
+
+### Exloratory Data Analysis: 
+
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+#loading data
+alexa <- read_tsv(file = 'amazon_alexa.tsv')
+```
+
+Data overview-  
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+alexa_head <- head(alexa, n = 20)
+datatable(alexa_head, caption = "Table 1: Alexa Data Set")
+```
+
+
+1. The dataset has reviews from `r nrow(alexa)` alexa users.
+
+2. The different alexa products that are reviewed - 
+```{r}
+alexa %>% 
+  group_by(variation) %>% 
+  count() %>% 
+  arrange(desc(n))
+```
+
+Black Dot has maximum number of reviews, and I bought it. Yay!
+
+
+3. The reviews were collected across three months of 2018. 
+```{r}
+alexa$date <- as.Date(alexa$date, "%d-%b-%y")
+
+alexa %>% 
+  group_by(month(date)) %>%
+  count()
+```
+
+4. The products obtained reviews and rating(ranging from 1-5) according to user's liking.
+```{r}
+ggplot(alexa , aes(rating)) + 
+  geom_bar()
+```
+
+According to this graph, it seems more than 70% of users liked the products and have rated them as 5 
+
+However, I feel rating is baised. 
+People tend to feel more than what they show by their rating. 
+Let's look at few of the reviews from people who rated the products as **2**- 
+
+```{r}
+alexa_reviews <- alexa %>% 
+  filter(rating == 2) %>% 
+  select(verified_reviews)
+
+alexa_head <- head(alexa_reviews, n = 20)
+datatable(alexa_head, caption = "Some of the reviews of people who rated the products as 2")
+```
+
+**"Poor quality"**, **"Too difficult to set-up"** and **"Worthless"** are few of the phrases that I observe. If I had this terrible experience, I would have rated the product 1 instead. 
+
+So, let's explore the reviews in depth- 
+
+```{r}
+alexa_reviews <- VectorSource(alexa$verified_reviews) 
+alexa_corpus <- VCorpus(alexa_reviews)
+clean_corpus <- function(corpus) {
+  #remove puntuation
+  corpus <- tm_map(corpus, removePunctuation)
+  #transform to lower case
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  #add stopwords
+  corpus <- tm_map(corpus, removeWords, stopwords("en"))
+  #strip whitespace
+  corpus <- tm_map(corpus, stripWhitespace)
+  return(corpus)
+}
+   
+alexa_clean <- clean_corpus(alexa_corpus)
+alexa_tdm  <- TermDocumentMatrix(alexa_clean)
+alexa_m <- as.matrix(alexa_tdm)
+```
+
+Let's look at the top 10 most used words in the reviews- 
+```{r}
+term_frequency <- rowSums(alexa_m) %>% 
+  sort(decreasing = TRUE)
+
+barplot(term_frequency[1:10], col = "steelblue", las = 2)
+```
+
+Words like *echo*, *music*, *alexa* have appeared more number of times, which is pretty obvious.
+
+Let's look at few more words- 
+
+```{r}
+word_freqs <- data.frame(term = names(term_frequency),
+                         num = term_frequency)
+wordcloud(word_freqs$term, word_freqs$num, max.words = 300,
+          colors = "#AD1DA5")
+```
+
+we observe words like echo, amazon, product, music more frequenty. Few not-so-good words are also observed. 
+Let's remove the obvious words and look deep. 
+
+```{r}
+clean_corpus <- function(corpus) {
+  #remove puntuation
+  corpus <- tm_map(corpus, removePunctuation)
+  #transform to lower case
+  corpus <- tm_map(corpus, content_transformer(tolower))
+  #add stopwords
+  corpus <- tm_map(corpus, removeWords, c(stopwords("en"),"amazon","echo",
+                                          "music","speaker","dot","device",
+                                          "devices","product","alexa","can",
+                                          "one","use","just","get","set","still","bought","will"))
+  #strip whitespace
+  corpus <- tm_map(corpus, stripWhitespace)
+  return(corpus)
+}
+
+alexa_clean <- clean_corpus(alexa_corpus)
+alexa_tdm  <- TermDocumentMatrix(alexa_clean)
+alexa_m <- as.matrix(alexa_tdm)
+term_frequency <- rowSums(alexa_m) %>% 
+  sort(decreasing = TRUE)
+```
+
+```{r}
+barplot(term_frequency[1:10], col = "steelblue", las = 2)
+```
+
+```{r}
+word_freqs <- data.frame(term = names(term_frequency),
+                         num = term_frequency)
+
+wordcloud(word_freqs$term, word_freqs$num, max.words = 200,
+          colors = c("grey80","darkgoldenrod1","tomato" ))
+```
+
+Here, we see lot more words and actually to be honest, they are quite mixed. Let's try to seggregate the words into positive and negative. We can guage some sentiments behind those reviews
+
+
+```{r}
+check <- alexa %>%  unnest_tokens(word, verified_reviews)
+
+check1 <- check %>% 
+  group_by(word) %>% 
+  mutate(freq = n()) %>% 
+  select(rating, variation, feedback, word, freq) 
+
+checked <- check1 %>%  inner_join(get_sentiments("bing"), by = "word")
+```
+
+I would look at the positive(in green) and negative(in red) reviews received- 
+```{r}
+what <- checked %>%
+  count(word, sentiment) %>%
+  mutate(color = ifelse(sentiment == "positive", "darkgreen", "red"))
+
+wordcloud(what$word, what$n, random.order = FALSE, colors = what$color, ordered.colors = TRUE)
+```
+
+Wow! This gives a much better overview. We observe that positive words like **love** and **great** are dominating.
+However, there are also negatives ones like- **disappointing**, **frustrating**, **disabled**. 
+Woah! This is not good. 
+
+Since, I am looking for a good product, let me look at the negative aspects as well. Let me see reviews that are rated below 2.
+
+```{r}
+below_rated <- checked %>%
+  filter(rating <= 2) %>% 
+  count(word, rating, sentiment) %>% 
+  filter(sentiment == 'negative')
+
+wordcloud(below_rated$word, below_rated$n, max.words = 100, random.order = FALSE)
+
+```
+
+This segregration of words into positive and negative does help me make sense of public rating. 
+
+Let me look at the ratio of positive and negative words used per product.
+
+checking the positive/negative ratio across the different alexa products, I find that **White Show** is appreciated the most whereas **Black Spot** isn't taken well.
+
+```{r}
+
+checked %>%  
+  group_by(variation, sentiment) %>% 
+  summarize(freq = mean(freq)) %>% 
+  spread(sentiment, freq) %>% 
+  ungroup() %>% 
+  mutate(ratio = positive/negative, 
+         variation = reorder(variation, ratio)) %>% 
+  ggplot(aes(variation, ratio)) +
+  geom_point() +
+  coord_flip()
+```
+
+Pppft! I can go ahead and buy White Show. 
+
+### Conclusion
+
+Examining text data allows us to illustrate many real complexities of data engineering, and also helps us to understand better a very important type of data. Medical records, consumer complaint logs, etc are still recorded as text, and exploiting this vast amount of data requires converting them into a meaningful form.
+
+This dataset gave me a brief understanding of how to text mine the data and understand the underlying sentiments.
+
+**Methodology**
+
+1. I performed text mining on the reviews. Reviews were broken down into individual words. Common english words were removed so that other not-so-frequent words would come into the picture. 
+
+2. Once I identified a pattern, I used sentiments lexicon to further classify the words into different type of sentiments to understand customers better.
+
+
+**Implication**
+
+This analysis can be used to further deep-dive into words and sentiments underneath those words. It will not only help in understanding customers better but we can use it to further improve the overall product quality. 
+
+**Limitation**
+
+Text mining is one important data processing step. By this analysis, I tried to make some sense from the data but I would like to explore more in-detail. I would like to see what happens when I look at phrases instead of individual words. I would also like to create a model so that I can predict emotions and learn about products thereby contributing in the real-world.
+
+
+
+
+
